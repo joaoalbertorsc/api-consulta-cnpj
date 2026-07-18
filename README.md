@@ -2,127 +2,204 @@
 
 ## Visão Geral
 
-Este projeto é uma API RESTful desenvolvida com Spring Boot para consultar informações de empresas brasileiras a partir de seu CNPJ. A API integra-se com serviços externos (BrasilAPI e ReceitaWS) para obter os dados e utiliza um banco de dados local (H2) como cache para otimizar consultas futuras.
+API RESTful em Java (Spring Boot) para consultar informações de empresas brasileiras a partir do CNPJ. A aplicação consulta serviços externos (BrasilAPI e ReceitaWS) e mantém uma persistência local em H2 (arquivo em `./data/cnpjdb`) para cache e estatísticas de uso.
 
-A aplicação foi projetada com foco em robustez, validação de dados e tratamento de erros, oferecendo uma interface clara e consistente para os consumidores da API.
+Principais pontos técnicos:
+- Validação do CNPJ: formato (14 dígitos numéricos) e algoritmo de dígitos verificadores implementados no controller.
+- Fallback entre APIs externas: a aplicação tenta primeiro a BrasilAPI; em caso de erro da API, faz fallback para a ReceitaWS (implementado de forma sequencial via try/catch no serviço).
+- Cache: `@Cacheable` em `CnpjService.consultarCnpj` com `spring.cache.type=simple` configurado.
+- H2: uso em modo de arquivo (`jdbc:h2:file:./data/cnpjdb`) com H2 Console habilitado.
 
-## Funcionalidades
+---
 
-- **Consulta de CNPJ**: Obtém dados detalhados de uma empresa através de seu CNPJ.
-- **Validação de Formato na Entrada**: A API valida se o CNPJ recebido está no formato de 14 dígitos numéricos.
-- **Fallback de API Externa**: Utiliza a BrasilAPI como fonte primária de dados e, em caso de falha, recorre à ReceitaWS como fonte secundária.
-- **Cache em Banco de Dados**: Armazena os resultados de consultas bem-sucedidas em um banco de dados local para acelerar requisições futuras e reduzir a dependência dos serviços externos.
-- **Busca Local**: Permite filtrar e buscar empresas já armazenadas no banco de dados por Razão Social, Município ou UF.
-- **Estatísticas de Uso**: Oferece um endpoint que retorna estatísticas sobre as consultas realizadas, como o número total de empresas no banco e as mais consultadas.
-- **Documentação de API**: Integra o SpringDoc OpenAPI para gerar uma interface Swagger UI, facilitando a exploração e o teste dos endpoints.
-- **Tratamento de Erros**: Respostas de erro padronizadas para requisições inválidas, recursos não encontrados ou falhas nos serviços externos.
+### Stack
+- Linguagem: Java 21
+- Framework / Runtime: Spring Boot 3.2.5
+- Build: Gradle (Gradle Wrapper incluído)
+- Bibliotecas notáveis: Spring Web, Spring Data JPA, Spring Cache, SpringDoc OpenAPI (Swagger), H2, Lombok
 
-## Tecnologias Utilizadas
+---
 
-- Java 21
-- Spring Boot 3.2.5
-- Spring Web
-- Spring Data JPA
-- Spring Cache
-- H2 Database (In-Memory)
-- Lombok
-- SpringDoc OpenAPI (Swagger)
-- Gradle
+## Organização do projeto
 
-## Documentação da API
+Estrutura relevante (top-level):
 
-Após iniciar a aplicação, a documentação completa da API pode ser acessada através do Swagger UI no seguinte endereço:
+```
+README.md
+HELP.md
+build.gradle
+settings.gradle
+gradle/
+gradlew
+gradlew.bat
+data/                 # pasta usada pelo H2 (arquivo de banco)
+src/
+  main/
+    java/
+      com.cnpjfinder/
+        controller/    # controllers REST (CnpjController)
+        service/       # lógica de negócio (CnpjService)
+        client/        # clientes para APIs externas (BrasilApiClient, ReceitaWsClient)
+        repository/    # Spring Data JPA repositories (EmpresaRepository)
+        model/         # entidades e DTOs (Empresa, Estatisticas)
+        exception/     # exceções customizadas
+        config/        # configurações (se houver)
+    resources/
+      application.properties
+  test/
+```
 
-http://localhost:8080/swagger-ui/index.html
+Como se encaixa: o `CnpjController` valida o CNPJ e delega para `CnpjService`. O serviço verifica a fonte de verdade local (EmpresaRepository); na ausência do registro tenta consultar `BrasilApiClient` e, se necessário, `ReceitaWsClient`. Resultados novos são salvos no H2 e o contador de consultas é atualizado.
 
-### Endpoints Principais
+---
 
-#### 1. Consultar um CNPJ
+## Endpoints principais
+Base: `/api/cnpj`
 
-Obtém os dados de uma empresa específica.
+1) Consultar um CNPJ
+- Método: GET
+- Path: `/api/cnpj/{cnpj}`
+- Path variable: `cnpj` — exatamente 14 dígitos numéricos
+- Validações:
+  - formato: `^\d{14}$`
+  - algoritmo: verificação dos dígitos implementada no controller
+- Respostas (implementadas no código):
+  - `200 OK` — retorna o objeto `Empresa`
+  - `400 Bad Request` — formato inválido ou algoritmo inválido
+  - `404 Not Found` — CNPJ não encontrado nas fontes externas nem no banco local
+  - `503 Service Unavailable` — quando APIs externas apresentarem indisponibilidade (conforme mapeamento de exceções)
 
-- **Método**: `GET`
-- **Path**: `/api/cnpj/{cnpj}`
+Exemplo:
+```sh
+curl -s http://localhost:8080/api/cnpj/01234567000189
+```
 
-- **Path Variable**:
-  - `cnpj` (String): O número do CNPJ a ser consultado, contendo exatamente 14 dígitos numéricos (`XXXXXXXXXXXXXX`).
+2) Buscar empresas na base local
+- Método: GET
+- Path: `/api/cnpj/buscar`
+- Query params (pelo menos um é obrigatório): `razaoSocial`, `municipio`, `uf`
+- Observação importante: o controller verifica os parâmetros em ordem e retorna resultados baseados no primeiro parâmetro não-nulo (ordem: `razaoSocial` → `municipio` → `uf`). Se múltiplos parâmetros forem enviados, somente o primeiro na ordem mencionada será utilizado.
+- Regras:
+  - `uf` deve ter exatamente 2 caracteres (caso contrário, 400 Bad Request)
+- Respostas:
+  - `200 OK` — lista (possivelmente vazia) de `Empresa`
+  - `400 Bad Request` — nenhum parâmetro fornecido ou `uf` com tamanho inválido
 
-- **Respostas de Sucesso**:
-  - `200 OK`: Retorna um objeto JSON com os dados da empresa.
+Exemplo:
+```sh
+curl -s "http://localhost:8080/api/cnpj/buscar?razaoSocial=empresa"
+```
 
-- **Respostas de Erro**:
-  - `400 Bad Request`: Se o CNPJ fornecido não tiver 14 dígitos numéricos ou se falhar na validação do algoritmo (dígitos verificadores).
-  - `404 Not Found`: Se o CNPJ for válido, mas não for encontrado em nenhuma das fontes de dados (APIs externas ou banco local).
-  - `503 Service Unavailable`: Se ambas as APIs externas estiverem indisponíveis ou retornarem erros inesperados.
+3) Obter estatísticas
+- Método: GET
+- Path: `/api/cnpj/estatisticas`
+- Retorno (200 OK): objeto `Estatisticas` contendo:
+  - `totalEmpresas` (Long)
+  - `totalConsultas` (Long)
+  - `empresasMaisConsultadas` (lista das top 10 por quantidade de consultas)
 
-#### 2. Buscar Empresas na Base Local
+Exemplo:
+```sh
+curl -s http://localhost:8080/api/cnpj/estatisticas
+```
 
-Realiza uma busca por empresas que já foram consultadas e estão salvas no banco de dados local.
+---
 
-- **Método**: `GET`
-- **Path**: `/api/cnpj/buscar`
+## Configuração e comportamento importante
+Arquivo principal: `src/main/resources/application.properties`.
 
-- **Query Parameters**:
-  - `razaoSocial` (String, opcional): Filtra empresas por parte da razão social (case-insensitive).
-  - `municipio` (String, opcional): Filtra empresas por parte do nome do município (case-insensitive).
-  - `uf` (String, opcional): Filtra empresas pela sigla do estado (UF). Deve conter exatamente 2 caracteres.
+Principais propriedades observadas no projeto:
 
-- **Regras**:
-  - Pelo menos um dos três parâmetros de busca deve ser fornecido.
+```
+spring.application.name=desafio-dio-spring
+server.port=8080
+spring.datasource.url=jdbc:h2:file:./data/cnpjdb
+spring.datasource.username=sa
+spring.datasource.password=password
+spring.h2.console.enabled=true
+spring.jpa.hibernate.ddl-auto=update
+spring.cache.type=simple
+spring.cache.cache-names=cnpjCache
+logging.level.com.cnpjfinder=DEBUG
+```
 
-- **Respostas de Sucesso**:
-  - `200 OK`: Retorna uma lista (potencialmente vazia) de objetos de empresas que correspondem ao critério de busca.
+- H2 em modo arquivo: os dados persistem em `./data/cnpjdb` entre execuções.
+- H2 Console: habilitado — URL padrão `/h2-console` (use as credenciais do `application.properties`).
+- Cache: `simple` (local, em memória) e método `consultarCnpj` possui `@Cacheable(value = "cnpjCache", key = "#cnpj")`.
+- Fallback: implementado de forma sequencial via `try/catch` no serviço (`CnpjService`). Não há uso explícito de bibliotecas como Resilience4j no código atual.
 
-- **Respostas de Erro**:
-  - `400 Bad Request`: Se nenhum parâmetro de busca for fornecido ou se o parâmetro `uf` não tiver 2 caracteres.
+---
 
-#### 3. Obter Estatísticas
+## Requisitos
+- Java 21 (JDK)
+- Git
 
-Retorna estatísticas de uso da API baseadas nos dados armazenados localmente.
+---
 
-- **Método**: `GET`
-- **Path**: `/api/cnpj/estatisticas`
+## Como executar
 
-- **Respostas de Sucesso**:
-  - `200 OK`: Retorna um objeto JSON contendo:
-    - `totalEmpresas`: O número total de empresas únicas no banco de dados.
-    - `totalConsultas`: A soma de todas as consultas realizadas (incluindo consultas repetidas ao mesmo CNPJ).
-    - `empresasMaisConsultadas`: Uma lista com as 10 empresas mais consultadas.
+1. Clone o repositório:
+```sh
+git clone https://github.com/joaoalbertorsc/desafio-dio-api-consulta-cnpj
+cd desafio-dio-api-consulta-cnpj
+```
 
-## Como Executar o Projeto
+2. Build:
+```sh
+./gradlew build
+```
 
-### Pré-requisitos
+3. Executar:
+- Com Gradle:
+```sh
+./gradlew bootRun
+```
+- Ou executando o JAR gerado (substitua pelo nome real do JAR gerado em `build/libs`):
+```sh
+java -jar build/libs/*.jar
+```
 
-- **Java JDK 21** ou superior.
-- Gradle 7.x ou superior (ou utilize o Gradle Wrapper incluído no projeto).
+4. Executar testes:
+```sh
+./gradlew test
+```
 
-### Passos
+5. Acessos úteis após subir a aplicação:
+- API: `http://localhost:8080`
+- Swagger UI (SpringDoc): `http://localhost:8080/swagger-ui/index.html`
+- H2 Console: `http://localhost:8080/h2-console` (credenciais conforme `application.properties`)
 
-1. **Clone o repositório:**
-   ```sh
-   git clone https://github.com/joaoalbertorsc/desafio-dio-api-consulta-cnpj
-   cd desafio-dio-spring
-   ```
+---
 
-2. **Construa o projeto com Gradle:**
-   No terminal, na raiz do projeto, execute:
-   ```sh
-   ./gradlew build
-   ```
-   (ou `gradlew.bat build` no Windows)
+## Exemplos rápidos (curl)
 
-3. **Execute a aplicação:**
-   Você pode executar a aplicação de duas maneiras:
+- Consultar CNPJ:
+```sh
+curl -s http://localhost:8080/api/cnpj/01234567000189
+```
 
-   - **Usando o Gradle:**
-     ```sh
-     ./gradlew bootRun
-     ```
+- Buscar por razão social:
+```sh
+curl -s "http://localhost:8080/api/cnpj/buscar?razaoSocial=empresa"
+```
 
-   - **Executando o arquivo JAR (após a construção):**
-     ```sh
-     java -jar build/libs/desafio-dio-spring-1.0.0.jar
-     ```
+- Estatísticas:
+```sh
+curl -s http://localhost:8080/api/cnpj/estatisticas
+```
 
-4. **Acesse a aplicação:**
-   A API estará disponível em `http://localhost:8080`.
+---
+
+## Observações e recomendações
+- Corrigi a instrução de `cd` após o clone — use o nome correto do repositório (`desafio-dio-api-consulta-cnpj`).
+- O README anterior mencionava um JAR com nome fixo (`desafio-dio-spring-1.0.0.jar`). O artifact gerado depende das configurações do Gradle; por simplicidade, sugerimos usar `build/libs/*.jar` ou verificar `build.gradle` para `group`/`version` e nome do projeto.
+- A busca `/buscar` atualmente utiliza um parâmetro por vez (comportamento do controller). Se o comportamento desejado for combinar filtros (AND), recomenda-se ajustar a implementação do controller/serviço e o repositório.
+- Recomenda-se adicionar exemplos reais de request/response JSON e documentar possíveis códigos de erro detalhadamente.
+
+---
+
+## Contribuindo
+Pull requests são bem-vindos. Para mudanças maiores, abra uma issue descrevendo a proposta.
+
+## Licença
+Adicionar arquivo LICENSE se necessário.
