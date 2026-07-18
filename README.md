@@ -266,8 +266,3 @@ Básico para PRs:
 Este repositório não contém um arquivo LICENSE por padrão. Para publicar publicamente, adicione um arquivo `LICENSE` apropriado (por exemplo, MIT, Apache-2.0) e mencione a licença aqui.
 
 ---
-
-Se quiser, eu posso também:
-- criar um `LICENSE` (MIT or Apache-2.0) e adicionar badges de CI se você me informar os detalhes do CI;
-- abrir um PR em vez de commitar na branch padrão;
-- gerar um diff/patch em vez de commitar diretamente.
