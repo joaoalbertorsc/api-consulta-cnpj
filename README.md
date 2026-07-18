@@ -190,13 +190,5 @@ curl -s http://localhost:8080/api/cnpj/estatisticas
 
 ---
 
-## Observações e recomendações
-- Corrigi a instrução de `cd` após o clone — use o nome correto do repositório (`desafio-dio-api-consulta-cnpj`).
-- O README anterior mencionava um JAR com nome fixo (`desafio-dio-spring-1.0.0.jar`). O artifact gerado depende das configurações do Gradle; por simplicidade, sugerimos usar `build/libs/*.jar` ou verificar `build.gradle` para `group`/`version` e nome do projeto.
-- A busca `/buscar` atualmente utiliza um parâmetro por vez (comportamento do controller). Se o comportamento desejado for combinar filtros (AND), recomenda-se ajustar a implementação do controller/serviço e o repositório.
-- Recomenda-se adicionar exemplos reais de request/response JSON e documentar possíveis códigos de erro detalhadamente.
-
----
-
 ## Contribuindo
 Pull requests são bem-vindos. Para mudanças maiores, abra uma issue descrevendo a proposta.
