@@ -200,6 +200,3 @@ curl -s http://localhost:8080/api/cnpj/estatisticas
 
 ## Contribuindo
 Pull requests são bem-vindos. Para mudanças maiores, abra uma issue descrevendo a proposta.
-
-## Licença
-Adicionar arquivo LICENSE se necessário.
